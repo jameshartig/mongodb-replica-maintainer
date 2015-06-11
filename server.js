@@ -31,7 +31,7 @@ function cleanupDeadReplicas(db) {
             }
             var changed = false;
             for (i = 0; i < doc.members.length; i++) {
-                if (!idsToRemove.indexOf(doc.members[i]._id) !== -1) {
+                if (idsToRemove.indexOf(doc.members[i]._id) !== -1) {
                     debug('Removing dead replica', doc.members[i].host);
                     doc.members.splice(i, 1);
                     i--;
