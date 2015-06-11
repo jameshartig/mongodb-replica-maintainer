@@ -7,6 +7,10 @@ BindsTo=mongod.service
 WorkingDirectory=/opt/mongodb-replica-maintainer
 ExecStart=/usr/local/bin/node server.js
 Environment="NODE_DEBUG=mongodb-replica-maintainer"
+TimeoutStartSec=15s
+Restart=on-failure
+StartLimitBurst=5
+StartLimitInterval=30
 
 [Install]
 WantedBy=multi-user.target
