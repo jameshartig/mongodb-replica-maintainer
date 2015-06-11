@@ -16,6 +16,7 @@ function addNewReplicaMember(db, host, cb) {
             return;
         }
         if (!doc || !Array.isArray(doc.members)) {
+            debug('invalid replset doc', doc);
             cb(new TypeError('Invalid members array in replset collection'));
             return;
         }
@@ -48,7 +49,7 @@ function addNewReplicaMember(db, host, cb) {
 }
 
 function handleMessage(db, ws, message) {
-    var ip = ws.address,
+    var ip = ws._socket.remoteAddress,
         command;
     try {
         command = JSON.parse(message);
@@ -65,8 +66,8 @@ function handleMessage(db, ws, message) {
         case 'add':
             //todo: validate the host
             if (!command.host) {
-                debug(ip, '- add command is missing host key');
-                break;
+                debug(ip, '- client didnt send host, assuming ip');
+                command.host = ws.address;
             }
             addNewReplicaMember(db, command.host, function(err, doc) {
                 if (err) {
@@ -87,20 +88,22 @@ MongoClient.connect(flags.get('mongo'), function(err, db) {
     if (err) {
         throw err;
     }
+    debug('mongoclient connected to', flags.get('mongo'));
 
     var server = new WebSocketServer({port: flags.get('port'), host: flags.get('ip')});
     server.on('connection', function(ws) {
-        debug(ws.address, '- connect');
+        var ip = ws._socket.remoteAddress;
+        debug(ip, '- connect');
 
         ws.on('message', function(message) {
-            debug(ws.address,'- message', message);
+            debug(ip,'- message', message);
             handleMessage(db, ws, message);
         });
         ws.on('error', function(err) {
-            debug(ws.address, '- ws error', err);
+            debug(ip, '- ws error', err);
         });
         ws.on('close', function() {
-            debug(ws.address, '- close');
+            debug(ip, '- close');
         });
     });
 });
