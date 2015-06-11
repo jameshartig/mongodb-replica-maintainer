@@ -1,0 +1,12 @@
+[Unit]
+Description=MongoDB replica server
+After=mongod.service
+BindsTo=mongod.service
+
+[Service]
+WorkingDirectory=/opt/mongodb-replica-maintainer
+ExecStart=/usr/local/bin/node run.js --runmode=production
+Environment="NODE_DEBUG=mongodb-replica-maintainer"
+
+[Install]
+WantedBy=multi-user.target

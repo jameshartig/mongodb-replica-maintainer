@@ -1,0 +1,13 @@
+[Unit]
+Description=MongoDB replica client
+After=network.target
+Before=mongod.service
+BindsTo=mongod.service
+
+[Service]
+WorkingDirectory=/opt/mongodb-replica-maintainer
+ExecStart=/usr/local/bin/node client.js --runmode=production
+Environment="NODE_DEBUG=api_methods,api_collections"
+
+[Install]
+WantedBy=multi-user.target

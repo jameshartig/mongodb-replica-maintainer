@@ -1,0 +1,24 @@
+{
+  "name": "mongodb-replica-maintainer",
+  "version": "0.0.1",
+  "description": "Add/remove replica members on the fly",
+  "main": "client.js",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/fastest963/mongodb-replica-maintainer.git"
+  },
+  "keywords": [
+    "mongodb",
+    "replica",
+    "client",
+    "maintainer"
+  ],
+  "dependencies": {
+    "flags": "^0.1.3",
+    "mongodb": "^2.0.33",
+    "ws": "^0.7.2"
+  },
+  "author": "James Hartig <fastest963@gmail.com>",
+  "license": "MIT",
+  "readmeFilename": "README.md"
+}
