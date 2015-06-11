@@ -7,9 +7,51 @@ var util = require('util'),
 flags.defineString('ip', '0.0.0.0', 'listen ip');
 flags.defineInteger('port', 27018, 'listen port');
 flags.defineString('mongo', 'mongodb://127.0.0.1:27017', 'mongodb connect string');
+flags.defineBoolean('clean', true, 'clean up dead replicas');
 flags.parse();
 
-function addNewReplicaMember(db, host, cb) {
+function cleanupDeadReplicas(db) {
+    var adminDB = db.admin();
+    adminDB.command({replSetGetStatus: 1}, function(err, status) {
+        var i = 0,
+            idsToRemove = [];
+        for (; i < status.members.length; i++) {
+            //state of 1 means primary
+            if (status.members[i].state !== 1 && !status.members[i].health && status.date - status.members[i].lastHeartbeatRecv > (3600 * 1000)) {
+                idsToRemove.push(status.members[i]._id);
+            }
+        }
+        if (idsToRemove.length < 1) {
+            return;
+        }
+        db.collection('system.replset').findOne({}, function(err, doc) {
+            if (err) {
+                cb(err);
+                return;
+            }
+            var changed = false;
+            for (i = 0; i < doc.members.length; i++) {
+                if (!idsToRemove.indexOf(doc.members[i]._id) !== -1) {
+                    debug('Removing dead replica', doc.members[i].host);
+                    doc.members.splice(i, 1);
+                    i--;
+                    changed = true;
+                }
+            }
+            if (!changed) {
+                return;
+            }
+            doc.version++;
+            db.admin().command({replSetReconfig: doc}, function(err, res) {
+                if (err) {
+                    debug('Error removing dead replica', doc);
+                }
+            });
+        });
+    });
+}
+
+function addNewReplicaMember(db, host, hidden, cb) {
     db.collection('system.replset').findOne({}, function(err, doc) {
         if (err) {
             cb(err);
@@ -20,31 +62,44 @@ function addNewReplicaMember(db, host, cb) {
             cb(new TypeError('Invalid members array in replset collection'));
             return;
         }
-        var found = false,
+        if (host.indexOf(':') === -1) {
+            host += ':27017';
+        }
+        var found = -1,
             highestID = 0,
-            i = 0;
+            i = 0,
+            changed = false;
         for (; i < doc.members.length; i++) {
             if (doc.members[i].host === host) {
-                found = true;
+                found = i;
                 break;
             }
             highestID = Math.max(highestID, doc.members[i]._id);
         }
-        if (!found) {
+        if (found < 0) {
             highestID++;
             debug('adding', host, 'to replica set with id', highestID);
-            doc.version++;
             //priority 0 means it will never be a primary
-            doc.members.push({_id: highestID, host: host, priority: 0, votes: 0});
-            db.admin().command({replSetReconfig: doc}, function(err, res) {
-                if (err) {
-                    cb(err);
-                    return;
-                }
-                debug('got result', res);
-                cb(null);
-            })
+            doc.members.push({_id: highestID, host: host, priority: 0, votes: 0, hidden: hidden});
+            changed = true;
+        } else {
+            if (doc.members[found].hidden !== hidden) {
+                doc.members[found].hidden = hidden;
+                changed = true;
+            }
         }
+        if (!changed) {
+            cb(null, true);
+            return;
+        }
+        doc.version++;
+        db.admin().command({replSetReconfig: doc}, function(err, res) {
+            if (err) {
+                cb(err);
+                return;
+            }
+            cb(null, true);
+        });
     });
 }
 
@@ -60,6 +115,7 @@ function handleMessage(db, ws, message) {
     }
     if (!command.cmd) {
         debug(ip, '- command is missing cmd key');
+        ws.send('{"success":false}');
         return;
     }
     switch (command.cmd) {
@@ -67,19 +123,24 @@ function handleMessage(db, ws, message) {
             //todo: validate the host
             if (!command.host) {
                 debug(ip, '- client didnt send host, assuming ip');
-                command.host = ws.address;
+                command.host = ip;
             }
-            addNewReplicaMember(db, command.host, function(err, doc) {
+            if (command.hidden === undefined) {
+                command.hidden = false;
+            }
+            addNewReplicaMember(db, command.host, command.hidden, function(err, doc) {
                 if (err) {
                     debug(ip, '- failed to add host', command.host, 'to replica:', err);
+                    ws.send('{"success":false}');
                     return;
                 }
                 debug(ip, '- successfully added', command.host);
-                //todo: return success
+                ws.send('{"success":true}');
             });
             break;
         default:
             debug(ip, '- unknown command received');
+            ws.send('{"success":false}');
             break;
     }
 }
@@ -88,6 +149,7 @@ MongoClient.connect(flags.get('mongo'), function(err, db) {
     if (err) {
         throw err;
     }
+    var localDB = db.db('local');
     debug('mongoclient connected to', flags.get('mongo'));
 
     var server = new WebSocketServer({port: flags.get('port'), host: flags.get('ip')});
@@ -97,7 +159,7 @@ MongoClient.connect(flags.get('mongo'), function(err, db) {
 
         ws.on('message', function(message) {
             debug(ip,'- message', message);
-            handleMessage(db, ws, message);
+            handleMessage(localDB, ws, message);
         });
         ws.on('error', function(err) {
             debug(ip, '- ws error', err);
@@ -106,4 +168,8 @@ MongoClient.connect(flags.get('mongo'), function(err, db) {
             debug(ip, '- close');
         });
     });
+
+    if (flags.get('clean')) {
+        setInterval(cleanupDeadReplicas.bind(null, localDB), 60000);
+    }
 });

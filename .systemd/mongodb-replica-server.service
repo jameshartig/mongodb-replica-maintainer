@@ -5,7 +5,7 @@ BindsTo=mongod.service
 
 [Service]
 WorkingDirectory=/opt/mongodb-replica-maintainer
-ExecStart=/usr/local/bin/node run.js --runmode=production
+ExecStart=/usr/local/bin/node server.js
 Environment="NODE_DEBUG=mongodb-replica-maintainer"
 
 [Install]
