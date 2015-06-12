@@ -1,7 +1,7 @@
 [Unit]
 Description=MongoDB replica server
 After=mongod.service
-BindsTo=mongod.service
+PartOf=mongod.service
 
 [Service]
 WorkingDirectory=/opt/mongodb-replica-maintainer

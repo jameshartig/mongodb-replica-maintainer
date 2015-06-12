@@ -2,7 +2,7 @@
 Description=MongoDB replica client
 After=network.target
 Before=mongod.service
-BindsTo=mongod.service
+PartOf=mongod.service
 
 [Service]
 WorkingDirectory=/opt/mongodb-replica-maintainer
