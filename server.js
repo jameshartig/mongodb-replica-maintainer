@@ -1,6 +1,7 @@
 var util = require('util'),
     flags = require('flags'),
     MongoClient = require('mongodb').MongoClient,
+    WebSocket = require('ws'),
     WebSocketServer = require('ws').Server,
     debug = util.debuglog('mongodb-replica-maintainer');
 
@@ -135,7 +136,10 @@ function handleMessage(db, ws, message) {
                     return;
                 }
                 debug(ip, '- successfully added', command.host);
-                ws.send('{"success":true}');
+                //make sure the socket is still open before trying to respond
+                if (ws.readyState === WebSocket.OPEN) {
+                    ws.send('{"success":true}');
+                }
             });
             break;
         default:
@@ -159,7 +163,11 @@ MongoClient.connect(flags.get('mongo'), function(err, db) {
 
         ws.on('message', function(message) {
             debug(ip,'- message', message);
-            handleMessage(localDB, ws, message);
+            try {
+                handleMessage(localDB, ws, message);
+            } catch (e) {
+                debug(ip, '- error handling message', e);
+            }
         });
         ws.on('error', function(err) {
             debug(ip, '- ws error', err);
