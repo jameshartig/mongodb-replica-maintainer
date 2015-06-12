@@ -14,6 +14,10 @@ flags.parse();
 function cleanupDeadReplicas(db) {
     var adminDB = db.admin();
     adminDB.command({replSetGetStatus: 1}, function(err, status) {
+        if (!status || !status.ok || !status.members) {
+            debug('Error calling replSetGetStatus', status);
+            return;
+        }
         var i = 0,
             idsToRemove = [];
         for (; i < status.members.length; i++) {
