@@ -16,8 +16,8 @@ function reconnect() {
     if (pendingReconnect) {
         return;
     }
-    //if we lose the connection, try to reconnect in 5 seconds
-    pendingReconnect = setTimeout(connect, 5000);
+    //if we lose the connection, try to reconnect in 60 seconds
+    pendingReconnect = setTimeout(connect, 60000);
 }
 
 function sendAdd(ws) {
