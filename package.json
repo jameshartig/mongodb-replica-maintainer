@@ -1,6 +1,6 @@
 {
   "name": "mongodb-replica-maintainer",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "description": "Add/remove replica members on the fly",
   "main": "client.js",
   "repository": {
