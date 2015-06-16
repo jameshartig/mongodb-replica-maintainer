@@ -3,7 +3,10 @@ var util = require('util'),
     MongoClient = require('mongodb').MongoClient,
     WebSocket = require('ws'),
     WebSocketServer = require('ws').Server,
-    debug = util.debuglog('mongodb-replica-maintainer');
+    debug = util.debuglog('mongodb-replica-maintainer'),
+    membersJustAdded = {},
+    gracePeriod = 5 * 60 * 1000, //give clients 5 minutes to start up before trying to remove
+    allClients = [];
 
 flags.defineString('ip', '0.0.0.0', 'listen ip');
 flags.defineInteger('port', 27018, 'listen port');
@@ -19,10 +22,19 @@ function cleanupDeadReplicas(db) {
             return;
         }
         var i = 0,
-            idsToRemove = [];
+            now = Date.now(),
+            idsToRemove = [],
+            member;
         for (; i < status.members.length; i++) {
+            member = status.members[i];
             //state of 1 means primary
-            if (status.members[i].state !== 1 && !status.members[i].health && status.date - status.members[i].lastHeartbeatRecv > (3600 * 1000)) {
+            if (member.state !== 1 && !member.health && status.date - member.lastHeartbeatRecv > (3600 * 1000)) {
+                if (membersJustAdded.hasOwnProperty(member.name)) {
+                    if (now - membersJustAdded[member.name] < gracePeriod) {
+                        continue;
+                    }
+                    delete membersJustAdded[member.name];
+                }
                 idsToRemove.push(status.members[i]._id);
             }
         }
@@ -38,6 +50,7 @@ function cleanupDeadReplicas(db) {
             for (i = 0; i < doc.members.length; i++) {
                 if (idsToRemove.indexOf(doc.members[i]._id) !== -1) {
                     debug('Removing dead replica', doc.members[i].host);
+                    broadcastRemoval(doc.members[i].host);
                     doc.members.splice(i, 1);
                     i--;
                     changed = true;
@@ -54,6 +67,19 @@ function cleanupDeadReplicas(db) {
             });
         });
     });
+}
+
+function broadcastRemoval(host) {
+    var msg = JSON.stringify({removed: host});
+    for (var i = 0; i < allClients.length; i++) {
+        try {
+            allClients[i].send(msg);
+        } catch (e) {
+            debug('Error broadcasting removal', e);
+            allClients.splice(i, 1);
+            i--;
+        }
+    }
 }
 
 function addNewReplicaMember(db, host, hidden, cb) {
@@ -94,7 +120,7 @@ function addNewReplicaMember(db, host, hidden, cb) {
             }
         }
         if (!changed) {
-            cb(null, true);
+            cb(null, host);
             return;
         }
         doc.version++;
@@ -103,7 +129,8 @@ function addNewReplicaMember(db, host, hidden, cb) {
                 cb(err);
                 return;
             }
-            cb(null, true);
+            membersJustAdded[host] = Date.now();
+            cb(null, host);
         });
     });
 }
@@ -133,17 +160,19 @@ function handleMessage(db, ws, message) {
             if (command.hidden === undefined) {
                 command.hidden = false;
             }
-            addNewReplicaMember(db, command.host, command.hidden, function(err, doc) {
+            addNewReplicaMember(db, command.host, command.hidden, function(err, hostAdded) {
                 if (err) {
                     debug(ip, '- failed to add host', command.host, 'to replica:', err);
                     ws.send('{"success":false}');
                     return;
                 }
-                debug(ip, '- successfully added', command.host);
+                debug(ip, '- successfully added', hostAdded);
                 //make sure the socket is still open before trying to respond
-                if (ws.readyState === WebSocket.OPEN) {
-                    ws.send('{"success":true}');
+                if (ws.readyState !== WebSocket.OPEN) {
+                    return;
                 }
+                ws.send(JSON.stringify({added: hostAdded, success: true}));
+                allClients.push(ws);
             });
             break;
         default:
@@ -175,9 +204,17 @@ MongoClient.connect(flags.get('mongo'), function(err, db) {
         });
         ws.on('error', function(err) {
             debug(ip, '- ws error', err);
+            var i = allClients.indexOf(ws);
+            if (i !== -1) {
+                allClients.splice(i, 1);
+            }
         });
         ws.on('close', function() {
             debug(ip, '- close');
+            var i = allClients.indexOf(ws);
+            if (i !== -1) {
+                allClients.splice(i, 1);
+            }
         });
     });
 

@@ -2,10 +2,12 @@ var util = require('util'),
     flags = require('flags'),
     WebSocket = require('ws'),
     debug = util.debuglog('mongodb-replica-maintainer'),
+    pendingConnect = null,
     pendingReconnect = null,
     pendingAdd = null,
     pingInterval = null,
-    server = '';
+    server = '',
+    ourHostname = '';
 
 flags.defineString('server', 'ws://10.0.0.2:27018', 'maintainer server endpoint');
 flags.defineString('host', '', 'mongodb host string or "" to rely on server');
@@ -25,6 +27,10 @@ function reconnect() {
 
 function sendAdd(ws) {
     clearTimeout(pendingAdd);
+    pendingAdd = null;
+    if (ws.readyState !== WebSocket.OPEN) {
+        return;
+    }
     debug('adding', flags.get('host'));
     ws.send(JSON.stringify({
         cmd: 'add',
@@ -58,11 +64,15 @@ function startPing(ws) {
 function connect() {
     clearTimeout(pendingReconnect);
     pendingReconnect = null;
+    clearTimeout(pendingConnect);
+    pendingConnect = null;
     debug(server, '- connecting...');
 
     var ws = new WebSocket(server);
     ws.on('open', function() {
         debug(server, '- connected');
+        clearTimeout(pendingConnect);
+        pendingConnect = null;
         //since we just connected we got a "pong"
         ws.lastPong = Date.now();
         sendAdd(ws);
@@ -77,21 +87,36 @@ function connect() {
             ws.close();
             return;
         }
-        clearTimeout(pendingAdd);
-        if (!result.success) {
-            debug(server, '- failed to add:', message);
+        //todo: remove !result.hasOwnProperty('removed') once we don't care about backwards-compatiblity
+        if (result.hasOwnProperty('added') || !result.hasOwnProperty('removed')) {
+            clearTimeout(pendingAdd);
+            pendingAdd = null;
+            if (!result.success) {
+                debug(server, '- failed to add:', message);
+                pendingAdd = setTimeout(function() {
+                    sendAdd(ws);
+                }, (Math.random() * 5000) + 10000); //randomly between 10-15 seconds
+            }
+            debug(server, '- successfully added!');
+            ourHostname = result.host;
+            //since we just received a message we got a "pong"
+            ws.lastPong = Date.now();
+            startPing(ws);
+            return;
+        }
+        if (result.hasOwnProperty('removed') && result.removed === ourHostname && pendingAdd === null) {
+            debug(server, '- removed us from replica set!');
             pendingAdd = setTimeout(function() {
                 sendAdd(ws);
-            }, 10000);
+            }, (Math.random() * 5000) + 10000); //randomly between 10-15 seconds
         }
-        debug(server, '- successfully added!');
-        //since we just received a message we got a "pong"
-        ws.lastPong = Date.now();
-        startPing(ws);
     });
     ws.on('error', function(err) {
         debug(server, '- error:', err);
         clearInterval(pingInterval);
+        pingInterval = null;
+        clearInterval(pendingAdd);
+        pendingAdd = null;
         reconnect();
     });
     ws.on('pong', function() {
@@ -100,7 +125,16 @@ function connect() {
     ws.on('close', function() {
         debug(server, '- disconnected');
         clearInterval(pingInterval);
+        pingInterval = null;
+        clearInterval(pendingAdd);
+        pendingAdd = null;
         reconnect();
     });
+
+    pendingConnect = setTimeout(function() {
+        debug(server, '- timed out waiting 15 seconds to connect');
+        ws.terminate();
+        reconnect();
+    }, 15000);
 }
 connect();
