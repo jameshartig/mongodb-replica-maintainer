@@ -5,7 +5,7 @@ var util = require('util'),
     WebSocketServer = require('ws').Server,
     debug = util.debuglog('mongodb-replica-maintainer'),
     membersJustAdded = {},
-    gracePeriod = 5 * 60 * 1000, //give clients 5 minutes to start up before trying to remove
+    gracePeriod = 15 * 60 * 1000, //give clients 15 minutes to start up before trying to remove
     allClients = [];
 
 flags.defineString('ip', '0.0.0.0', 'listen ip');

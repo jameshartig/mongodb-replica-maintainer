@@ -98,7 +98,7 @@ function connect() {
                 }, (Math.random() * 5000) + 10000); //randomly between 10-15 seconds
             }
             debug(server, '- successfully added!');
-            ourHostname = result.host;
+            ourHostname = result.added;
             //since we just received a message we got a "pong"
             ws.lastPong = Date.now();
             startPing(ws);
