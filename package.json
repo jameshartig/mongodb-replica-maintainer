@@ -1,7 +1,7 @@
 {
   "name": "mongodb-replica-maintainer",
   "version": "0.2.0",
-  "description": "Add/remove replica members on the fly",
+  "description": "Client and server for adding and removing MongoDB replica members",
   "main": "client.js",
   "repository": {
     "type": "git",
@@ -16,6 +16,8 @@
   "dependencies": {
     "flags": "^0.1.3",
     "mongodb": "^2.0.33",
+    "skyprovider": "^0.0.1",
+    "srvclient": "^0.0.3",
     "ws": "^0.7.2"
   },
   "author": "James Hartig <fastest963@gmail.com>",

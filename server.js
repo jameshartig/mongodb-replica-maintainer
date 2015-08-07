@@ -1,6 +1,7 @@
 var util = require('util'),
     flags = require('flags'),
     MongoClient = require('mongodb').MongoClient,
+    SkyProvider = require('skyprovider'),
     WebSocket = require('ws'),
     WebSocketServer = require('ws').Server,
     debug = util.debuglog('mongodb-replica-maintainer'),
@@ -12,6 +13,7 @@ flags.defineString('ip', '0.0.0.0', 'listen ip');
 flags.defineInteger('port', 27018, 'listen port');
 flags.defineString('mongo', 'mongodb://127.0.0.1:27017', 'mongodb connect string');
 flags.defineBoolean('clean', true, 'clean up dead replicas');
+flags.defineString('skyapi', '', 'skyapi address to advertise to');
 flags.parse();
 
 function cleanupDeadReplicas(db) {
@@ -182,6 +184,21 @@ function handleMessage(db, ws, message) {
     }
 }
 
+function advertiseToSkyAPI() {
+    var skyapiAddr = flags.get('skyapi');
+    if (!skyapiAddr) {
+        return;
+    }
+    if (skyapiAddr.indexOf('://') === -1) {
+        skyapiAddr = 'ws://' + skyapiAddr;
+    }
+    if (skyapiAddr.indexOf('/provide') === -1) {
+        skyapiAddr += '/provide';
+    }
+    var provider = new SkyProvider(skyapiAddr);
+    provider.provideService('mongodb-replica-maintainer', flags.get('port'));
+}
+
 MongoClient.connect(flags.get('mongo'), function(err, db) {
     if (err) {
         throw err;
@@ -189,7 +206,7 @@ MongoClient.connect(flags.get('mongo'), function(err, db) {
     var localDB = db.db('local');
     debug('mongoclient connected to', flags.get('mongo'));
 
-    var server = new WebSocketServer({port: flags.get('port'), host: flags.get('ip')});
+    var server = new WebSocketServer({port: flags.get('port'), host: flags.get('ip')}, advertiseToSkyAPI);
     server.on('connection', function(ws) {
         var ip = ws._socket.remoteAddress;
         debug(ip, '- connect');

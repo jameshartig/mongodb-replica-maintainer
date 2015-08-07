@@ -6,7 +6,7 @@ PartOf=mongod.service
 
 [Service]
 WorkingDirectory=/opt/mongodb-replica-maintainer
-ExecStart=/usr/local/bin/node client.js
+ExecStart=/usr/local/bin/node client.js --server=ws://127.0.0.1:27018
 Environment="NODE_DEBUG=mongodb-replica-maintainer"
 TimeoutStartSec=15s
 Restart=on-failure
