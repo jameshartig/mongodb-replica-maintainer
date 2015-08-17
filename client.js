@@ -14,6 +14,8 @@ flags.defineString('host', '', 'mongodb host string or "" to rely on server');
 flags.defineBoolean('hidden', false, 'set the replica hidden option');
 flags.defineInteger('ping', 15000, 'ms between pings (2 pings means failed)');
 flags.defineInteger('reconnect', 30000, 'ms before reconnecting');
+flags.defineInteger('priority', 0, 'this replica\'s priority');
+flags.defineInteger('votes', 0, 'this replica\'s votes');
 flags.parse();
 server = flags.get('server');
 
@@ -35,7 +37,9 @@ function sendAdd(ws) {
     ws.send(JSON.stringify({
         cmd: 'add',
         host: flags.get('host') || undefined,
-        hidden: flags.get('hidden')
+        hidden: flags.get('hidden'),
+        priority: flags.get('priority'),
+        votes: flags.get('votes')
     }));
     pendingAdd = setTimeout(function() {
         debug(ws.url, '- timed out waiting for response');
@@ -92,8 +96,7 @@ function connect(address) {
             ws.close();
             return;
         }
-        //todo: remove !result.hasOwnProperty('removed') once we don't care about backwards-compatiblity
-        if (result.hasOwnProperty('added') || !result.hasOwnProperty('removed')) {
+        if (result.hasOwnProperty('added')) {
             clearTimeout(pendingAdd);
             pendingAdd = null;
             if (!result.success) {

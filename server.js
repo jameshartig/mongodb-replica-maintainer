@@ -84,7 +84,7 @@ function broadcastRemoval(host) {
     }
 }
 
-function addNewReplicaMember(db, host, hidden, cb) {
+function addNewReplicaMember(db, host, hidden, priority, votes, cb) {
     db.collection('system.replset').findOne({}, function(err, doc) {
         if (err) {
             cb(err);
@@ -113,11 +113,19 @@ function addNewReplicaMember(db, host, hidden, cb) {
             highestID++;
             debug('adding', host, 'to replica set with id', highestID);
             //priority 0 means it will never be a primary
-            doc.members.push({_id: highestID, host: host, priority: 0, votes: 0, hidden: hidden});
+            doc.members.push({_id: highestID, host: host, priority: priority, votes: votes, hidden: hidden});
             changed = true;
         } else {
             if (doc.members[found].hidden !== hidden) {
                 doc.members[found].hidden = hidden;
+                changed = true;
+            }
+            if (doc.members[found].priority !== priority) {
+                doc.members[found].priority = priority;
+                changed = true;
+            }
+            if (doc.members[found].votes !== votes) {
+                doc.members[found].votes = votes;
                 changed = true;
             }
         }
@@ -162,7 +170,13 @@ function handleMessage(db, ws, message) {
             if (command.hidden === undefined) {
                 command.hidden = false;
             }
-            addNewReplicaMember(db, command.host, command.hidden, function(err, hostAdded) {
+            if (command.priority === undefined) {
+                command.priority = 0;
+            }
+            if (command.votes === undefined) {
+                command.votes = 0;
+            }
+            addNewReplicaMember(db, command.host, command.hidden, command.priority, command.votes, function(err, hostAdded) {
                 if (err) {
                     debug(ip, '- failed to add host', command.host, 'to replica:', err);
                     ws.send('{"success":false}');
