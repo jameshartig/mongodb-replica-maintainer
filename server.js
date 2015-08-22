@@ -20,7 +20,11 @@ function cleanupDeadReplicas(db) {
     var adminDB = db.admin();
     adminDB.command({replSetGetStatus: 1}, function(err, status) {
         if (!status || !status.ok || !status.members) {
-            debug('Error calling replSetGetStatus', status);
+            if (!status) {
+                debug('Error calling replSetGetStatus', err);
+            } else {
+                debug('Error calling replSetGetStatus', status);
+            }
             return;
         }
         var i = 0,
@@ -213,8 +217,25 @@ function advertiseToSkyAPI() {
     provider.provideService('mongodb-replica-maintainer', flags.get('port'));
 }
 
-MongoClient.connect(flags.get('mongo'), function(err, db) {
+var options = {},
+    serverOptions = {
+        autoReconnect: true,
+        connectTimeoutMS: 5000
+    };
+options.db = {
+    bufferMaxEntries: 0 //do not buffer any commands
+};
+options.server = {
+    socketOptions: serverOptions,
+    reconnectTries: 432000, //5 days in seconds
+    reconnectInterval: 1000
+};
+options.replSet = {
+    socketOptions: serverOptions
+};
+MongoClient.connect(flags.get('mongo'), options, function(err, db) {
     if (err) {
+        debug('Error connecting to mongo:', err);
         throw err;
     }
     var localDB = db.db('local');

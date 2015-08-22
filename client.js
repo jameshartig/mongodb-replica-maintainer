@@ -13,7 +13,7 @@ flags.defineString('server', '', 'maintainer server endpoint');
 flags.defineString('host', '', 'mongodb host string or "" to rely on server');
 flags.defineBoolean('hidden', false, 'set the replica hidden option');
 flags.defineInteger('ping', 15000, 'ms between pings (2 pings means failed)');
-flags.defineInteger('reconnect', 30000, 'ms before reconnecting');
+flags.defineInteger('reconnect', 5000, 'ms before reconnecting');
 flags.defineInteger('priority', 0, 'this replica\'s priority');
 flags.defineInteger('votes', 0, 'this replica\'s votes');
 flags.parse();
@@ -24,7 +24,31 @@ function reconnect() {
         return;
     }
     //if we lose the connection, try to reconnect in x seconds
-    pendingReconnect = setTimeout(connect, Math.max(100, flags.get('reconnect')));
+    pendingReconnect = setTimeout(resolveAndConnect, Math.max(100, flags.get('reconnect')));
+}
+
+function resolveAndConnect() {
+    if (server.indexOf('srv://') === 0) {
+        var srv = require('srvclient'),
+            hostname = server.substr(6);
+        srv.getTarget(hostname, function(err, target) {
+            if (err) {
+                debug('Failed to resolve:', hostname, err);
+                setTimeout(resolveAndConnect, Math.max(100, flags.get('reconnect')));
+                return;
+            }
+            target.resolve(function(err, addr) {
+                if (err) {
+                    debug('Failed to resolve', target, err);
+                    setTimeout(resolveAndConnect, Math.max(100, flags.get('reconnect')));
+                    return;
+                }
+                connect('ws://' + [addr, target.port].join(':'));
+            });
+        });
+    } else {
+        connect(server);
+    }
 }
 
 function sendAdd(ws) {
@@ -146,19 +170,4 @@ function connect(address) {
     }, 15000);
 }
 
-if (server.indexOf('srv://') === 0) {
-    var srv = require('srvclient');
-    srv.getTarget(server.substr(6), function(err, target) {
-        if (err) {
-            throw err;
-        }
-        target.resolve(function(err, addr) {
-            if (err) {
-                throw err;
-            }
-            connect('ws://' + [addr, target.port].join(':'));
-        });
-    });
-} else {
-    connect(server);
-}
+resolveAndConnect();
