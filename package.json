@@ -16,7 +16,7 @@
   "dependencies": {
     "flags": "^0.1.3",
     "mongodb": "^2.0.41",
-    "skyprovider": "^0.0.1",
+    "skyprovider": "^0.0.2",
     "srvclient": "^0.0.3",
     "ws": "^0.7.2"
   },
