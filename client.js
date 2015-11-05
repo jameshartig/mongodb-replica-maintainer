@@ -35,7 +35,7 @@ function resolveAndConnect() {
     if (server.indexOf('srv://') === 0) {
         var srv = require('srvclient'),
             hostname = server.substr(6);
-        Log.debug('Resolving srv address', {hostname: hostname});
+        Log.info('Resolving srv address', {hostname: hostname});
         srv.getTarget(hostname, function(err, target) {
             if (err) {
                 Log.error('Failed to resolve srv hostname', {hostname: hostname, error: err});
