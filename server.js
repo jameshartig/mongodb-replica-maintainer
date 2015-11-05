@@ -1,10 +1,9 @@
-var util = require('util'),
-    flags = require('flags'),
+var flags = require('flags'),
     MongoClient = require('mongodb').MongoClient,
     SkyProvider = require('skyprovider'),
     WebSocket = require('ws'),
     WebSocketServer = require('ws').Server,
-    Log = require('modulelog'),
+    Log = require('modulelog')('mongodb-replica-maintainer'),
     membersJustAdded = {},
     gracePeriod = 15 * 60 * 1000, //give clients 15 minutes to start up before trying to remove
     allClients = [];
@@ -18,7 +17,7 @@ flags.defineString('logger', 'default', 'the class to use for logging');
 flags.defineString('log-level', 'info', 'the log level');
 flags.parse();
 
-Log.setClass(flags.get('logger'), 'mongodb-replica-maintainer');
+Log.setClass(flags.get('logger'));
 Log.setLevel(flags.get('log-level'));
 
 function cleanupDeadReplicas(db) {

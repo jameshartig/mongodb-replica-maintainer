@@ -1,7 +1,6 @@
-var util = require('util'),
-    flags = require('flags'),
+var flags = require('flags'),
     WebSocket = require('ws'),
-    Log = require('modulelog'),
+    Log = require('modulelog')('mongodb-replica-maintainer'),
     pendingConnect = null,
     pendingReconnect = null,
     pendingAdd = null,
@@ -21,7 +20,7 @@ flags.defineString('log-level', 'info', 'the log level');
 flags.parse();
 server = flags.get('server');
 
-Log.setClass(flags.get('logger'), 'mongodb-replica-maintainer');
+Log.setClass(flags.get('logger'));
 Log.setLevel(flags.get('log-level'));
 
 function reconnect() {
