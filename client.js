@@ -35,14 +35,14 @@ function resolveAndConnect() {
     if (server.indexOf('srv://') === 0) {
         var srv = require('srvclient'),
             hostname = server.substr(6);
-        Log.info('Resolving srv address', {hostname: hostname});
+        Log.debug('Resolving srv address', {hostname: hostname});
         srv.getTarget(hostname, function(err, target) {
             if (err) {
                 Log.error('Failed to resolve srv hostname', {hostname: hostname, error: err});
                 setTimeout(resolveAndConnect, Math.max(100, flags.get('reconnect')));
                 return;
             }
-            Log.info('Resolving srv target', {target: target, hostname: hostname});
+            Log.debug('Resolving srv target', {target: target, hostname: hostname});
             target.resolve(function(err, addr) {
                 if (err) {
                     Log.error('Failed to resolve srv target', {target: target, hostname: hostname, error: err});
@@ -67,7 +67,7 @@ function sendAdd(ws) {
         hidden = flags.get('hidden'),
         pri = flags.get('priority'),
         votes = flags.get('votes');
-    Log.info('Sending add', {host: host, hidden: hidden, priority: pri, votes: votes});
+    Log.debug('Sending add', {host: host, hidden: hidden, priority: pri, votes: votes});
     ws.send(JSON.stringify({
         cmd: 'add',
         host: host,
