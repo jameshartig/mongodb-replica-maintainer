@@ -1,7 +1,7 @@
 var util = require('util'),
     flags = require('flags'),
     WebSocket = require('ws'),
-    debug = util.debuglog('mongodb-replica-maintainer'),
+    Log = require('modulelog'),
     pendingConnect = null,
     pendingReconnect = null,
     pendingAdd = null,
@@ -16,8 +16,13 @@ flags.defineInteger('ping', 15000, 'ms between pings (2 pings means failed)');
 flags.defineInteger('reconnect', 5000, 'ms before reconnecting');
 flags.defineInteger('priority', 0, 'this replica\'s priority');
 flags.defineInteger('votes', 0, 'this replica\'s votes');
+flags.defineString('logger', 'default', 'the class to use for logging');
+flags.defineString('log-level', 'info', 'the log level');
 flags.parse();
 server = flags.get('server');
+
+Log.setClass(flags.get('logger'), 'mongodb-replica-maintainer');
+Log.setLevel(flags.get('log-level'));
 
 function reconnect() {
     if (pendingReconnect || !flags.get('reconnect')) {
@@ -31,15 +36,17 @@ function resolveAndConnect() {
     if (server.indexOf('srv://') === 0) {
         var srv = require('srvclient'),
             hostname = server.substr(6);
+        Log.info('Resolving srv address', {hostname: hostname});
         srv.getTarget(hostname, function(err, target) {
             if (err) {
-                debug('Failed to resolve:', hostname, err);
+                Log.error('Failed to resolve srv hostname', {hostname: hostname, error: err});
                 setTimeout(resolveAndConnect, Math.max(100, flags.get('reconnect')));
                 return;
             }
+            Log.info('Resolving srv target', {target: target, hostname: hostname});
             target.resolve(function(err, addr) {
                 if (err) {
-                    debug('Failed to resolve', target, err);
+                    Log.error('Failed to resolve srv target', {target: target, hostname: hostname, error: err});
                     setTimeout(resolveAndConnect, Math.max(100, flags.get('reconnect')));
                     return;
                 }
@@ -57,16 +64,20 @@ function sendAdd(ws) {
     if (ws.readyState !== WebSocket.OPEN) {
         return;
     }
-    debug('adding', flags.get('host'));
+    var host = flags.get('host') || undefined,
+        hidden = flags.get('hidden'),
+        pri = flags.get('priority'),
+        votes = flags.get('votes');
+    Log.info('Sending add', {host: host, hidden: hidden, priority: pri, votes: votes});
     ws.send(JSON.stringify({
         cmd: 'add',
-        host: flags.get('host') || undefined,
-        hidden: flags.get('hidden'),
-        priority: flags.get('priority'),
-        votes: flags.get('votes')
+        host: host,
+        hidden: hidden,
+        priority: pri,
+        votes: votes
     }));
     pendingAdd = setTimeout(function() {
-        debug(ws.url, '- timed out waiting for response');
+        Log.error("Timed out waiting for response to add", {url: ws.url});
         sendAdd(ws);
     }, 15000);
 }
@@ -83,7 +94,7 @@ function startPing(ws) {
         }
         ws.ping();
         if (Date.now() - ws.lastPong >= (2 * interval)) {
-            debug(ws.url, '- timeout waiting for pongs');
+            Log.error("Timed out waiting for pong", {url: ws.url});
             ws.close();
         }
     }, interval);
@@ -99,11 +110,11 @@ function connect(address) {
         address = 'ws://' + address;
     }
 
-    debug(address, '- connecting...');
+    Log.debug("Connecting to ws", {address: address});
 
     var ws = new WebSocket(address);
     ws.on('open', function() {
-        debug(address, '- connected');
+        Log.info("Connected to ws", {address: address});
         clearTimeout(pendingConnect);
         pendingConnect = null;
         //since we just connected we got a "pong"
@@ -111,12 +122,12 @@ function connect(address) {
         sendAdd(ws);
     });
     ws.on('message', function(message) {
-        debug(address, '- message:', message);
+        Log.debug("Received message", {message: message});
         var result;
         try {
             result = JSON.parse(message);
         } catch (e) {
-            debug(address, '- invalid json:', e);
+            Log.error("Received invalid json", {message: message, error: e});
             ws.close();
             return;
         }
@@ -124,12 +135,12 @@ function connect(address) {
             clearTimeout(pendingAdd);
             pendingAdd = null;
             if (!result.success) {
-                debug(address, '- failed to add:', message);
+                Log.error("Failed to add", {error: result.error});
                 pendingAdd = setTimeout(function() {
                     sendAdd(ws);
                 }, (Math.random() * 5000) + 10000); //randomly between 10-15 seconds
             }
-            debug(address, '- successfully added!');
+            Log.info("Added", {hostname: result.added});
             ourHostname = result.added;
             //since we just received a message we got a "pong"
             ws.lastPong = Date.now();
@@ -137,14 +148,14 @@ function connect(address) {
             return;
         }
         if (result.hasOwnProperty('removed') && result.removed === ourHostname && pendingAdd === null) {
-            debug(address, '- removed us from replica set!');
+            Log.error("Removed from replica set", {hostname: result.removed});
             pendingAdd = setTimeout(function() {
                 sendAdd(ws);
             }, (Math.random() * 5000) + 10000); //randomly between 10-15 seconds
         }
     });
     ws.on('error', function(err) {
-        debug(address, '- error:', err);
+        Log.error("Error from ws", {error: err});
         clearInterval(pingInterval);
         pingInterval = null;
         clearInterval(pendingAdd);
@@ -152,10 +163,11 @@ function connect(address) {
         reconnect();
     });
     ws.on('pong', function() {
+        Log.debug("Received pong");
         ws.lastPong = Date.now();
     });
     ws.on('close', function() {
-        debug(address, '- disconnected');
+        Log.error("Disconnected from ws", {address: address});
         clearInterval(pingInterval);
         pingInterval = null;
         clearInterval(pendingAdd);
@@ -164,7 +176,7 @@ function connect(address) {
     });
 
     pendingConnect = setTimeout(function() {
-        debug(address, '- timed out waiting 15 seconds to connect');
+        Log.error("Timed out waiting to connect to ws", {address: address});
         ws.terminate();
         reconnect();
     }, 15000);

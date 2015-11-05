@@ -4,7 +4,7 @@ var util = require('util'),
     SkyProvider = require('skyprovider'),
     WebSocket = require('ws'),
     WebSocketServer = require('ws').Server,
-    debug = util.debuglog('mongodb-replica-maintainer'),
+    Log = require('modulelog'),
     membersJustAdded = {},
     gracePeriod = 15 * 60 * 1000, //give clients 15 minutes to start up before trying to remove
     allClients = [];
@@ -14,16 +14,21 @@ flags.defineInteger('port', 27018, 'listen port');
 flags.defineString('mongo', 'mongodb://127.0.0.1:27017', 'mongodb connect string');
 flags.defineBoolean('clean', true, 'clean up dead replicas');
 flags.defineString('skyapi', '', 'skyapi address to advertise to');
+flags.defineString('logger', 'default', 'the class to use for logging');
+flags.defineString('log-level', 'info', 'the log level');
 flags.parse();
+
+Log.setClass(flags.get('logger'), 'mongodb-replica-maintainer');
+Log.setLevel(flags.get('log-level'));
 
 function cleanupDeadReplicas(db) {
     var adminDB = db.admin();
     adminDB.command({replSetGetStatus: 1}, function(err, status) {
         if (!status || !status.ok || !status.members) {
             if (!status) {
-                debug('Error calling replSetGetStatus', err);
+                Log.error('Error calling replSetGetStatus', {error: err});
             } else {
-                debug('Error calling replSetGetStatus', status);
+                Log.error('Error calling replSetGetStatus', {status: status});
             }
             return;
         }
@@ -44,6 +49,7 @@ function cleanupDeadReplicas(db) {
                 idsToRemove.push(status.members[i]._id);
             }
         }
+        Log.debug('Removing dead replicas', {count: idsToRemove.length});
         if (idsToRemove.length < 1) {
             return;
         }
@@ -55,7 +61,7 @@ function cleanupDeadReplicas(db) {
             var changed = false;
             for (i = 0; i < doc.members.length; i++) {
                 if (idsToRemove.indexOf(doc.members[i]._id) !== -1) {
-                    debug('Removing dead replica', doc.members[i].host);
+                    Log.info('Removing dead replica', {host: doc.members[i].host});
                     broadcastRemoval(doc.members[i].host);
                     doc.members.splice(i, 1);
                     i--;
@@ -68,7 +74,7 @@ function cleanupDeadReplicas(db) {
             doc.version++;
             db.admin().command({replSetReconfig: doc}, function(err, res) {
                 if (err) {
-                    debug('Error removing dead replica', doc);
+                    Log.error('Error removing dead replicas', {error: err});
                 }
             });
         });
@@ -81,7 +87,7 @@ function broadcastRemoval(host) {
         try {
             allClients[i].send(msg);
         } catch (e) {
-            debug('Error broadcasting removal', e);
+            Log.error('Error broadcasting removal', {error: e});
             allClients.splice(i, 1);
             i--;
         }
@@ -95,7 +101,7 @@ function addNewReplicaMember(db, host, hidden, priority, votes, cb) {
             return;
         }
         if (!doc || !Array.isArray(doc.members)) {
-            debug('invalid replset doc', doc);
+            Log.error('invalid replset doc', {doc: doc});
             cb(new TypeError('Invalid members array in replset collection'));
             return;
         }
@@ -115,7 +121,7 @@ function addNewReplicaMember(db, host, hidden, priority, votes, cb) {
         }
         if (found < 0) {
             highestID++;
-            debug('adding', host, 'to replica set with id', highestID);
+            Log.debug('Adding new replica', {host: host, id: highestID});
             //priority 0 means it will never be a primary
             doc.members.push({_id: highestID, host: host, priority: priority, votes: votes, hidden: hidden});
             changed = true;
@@ -131,6 +137,9 @@ function addNewReplicaMember(db, host, hidden, priority, votes, cb) {
             if (doc.members[found].votes !== votes) {
                 doc.members[found].votes = votes;
                 changed = true;
+            }
+            if (changed) {
+                Log.debug('Updating existing replica', {host: host});
             }
         }
         if (!changed) {
@@ -155,20 +164,20 @@ function handleMessage(db, ws, message) {
     try {
         command = JSON.parse(message);
     } catch (e) {
-        debug(ip, '- invalid json:', e);
+        Log.error('Received invalid json', {error: e, ip: ip});
         ws.close();
         return;
     }
     if (!command.cmd) {
-        debug(ip, '- command is missing cmd key');
-        ws.send('{"success":false}');
+        Log.error('Received message without cmd', {command: command, ip: ip});
+        ws.send('{"success":false,"error":"no cmd"}');
         return;
     }
     switch (command.cmd) {
         case 'add':
             //todo: validate the host
             if (!command.host) {
-                debug(ip, '- client didnt send host, assuming ip');
+                Log.debug('Assuming ip from sender', {ip: ip});
                 command.host = ip;
             }
             if (command.hidden === undefined) {
@@ -182,11 +191,11 @@ function handleMessage(db, ws, message) {
             }
             addNewReplicaMember(db, command.host, command.hidden, command.priority, command.votes, function(err, hostAdded) {
                 if (err) {
-                    debug(ip, '- failed to add host', command.host, 'to replica:', err);
-                    ws.send('{"success":false}');
+                    Log.error('Failed to add replica', {ip: ip, host: command.host, error: err});
+                    ws.send('{"success":false,"error":"internal error"}');
                     return;
                 }
-                debug(ip, '- successfully added', hostAdded);
+                Log.info('Added new replica', {host: hostAdded, ip: ip});
                 //make sure the socket is still open before trying to respond
                 if (ws.readyState !== WebSocket.OPEN) {
                     return;
@@ -196,14 +205,15 @@ function handleMessage(db, ws, message) {
             });
             break;
         default:
-            debug(ip, '- unknown command received');
-            ws.send('{"success":false}');
+            Log.error('Unknown command received', {command: command.cmd, ip: ip});
+            ws.send('{"success":false,"error":"unknown cmd"}');
             break;
     }
 }
 
 function advertiseToSkyAPI() {
-    var skyapiAddr = flags.get('skyapi');
+    var skyapiAddr = flags.get('skyapi'),
+        port = flags.get('port');
     if (!skyapiAddr) {
         return;
     }
@@ -213,14 +223,17 @@ function advertiseToSkyAPI() {
     if (skyapiAddr.indexOf('/provide') === -1) {
         skyapiAddr += '/provide';
     }
+    Log.info('Advertising to skyapi', {skyapi: skyapiAddr, port: port});
     var provider = new SkyProvider(skyapiAddr);
-    provider.provideService('mongodb-replica-maintainer', flags.get('port'));
+    provider.provideService('mongodb-replica-maintainer', port);
 }
 
 var options = {},
     serverOptions = {
         autoReconnect: true,
-        connectTimeoutMS: 5000
+        keepAlive: 5000, //wait 5 seconds before starting keep-alive
+        connectTimeoutMS: 5000,
+        noDelay: true
     };
 options.db = {
     bufferMaxEntries: 0 //do not buffer any commands
@@ -231,38 +244,73 @@ options.server = {
     reconnectInterval: 1000
 };
 options.replSet = {
-    socketOptions: serverOptions
+    socketOptions: serverOptions,
+    connectWithNoPrimary: false
 };
 MongoClient.connect(flags.get('mongo'), options, function(err, db) {
     if (err) {
-        debug('Error connecting to mongo:', err);
+        Log.error('Error connecting to mongo', {error: err});
         throw err;
     }
-    var localDB = db.db('local');
-    debug('mongoclient connected to', flags.get('mongo'));
+    var topology = db.s.topology,
+        localDB = db.db('local'),
+        numNoPrimaries = 0,
+        server = null;
 
-    var server = new WebSocketServer({port: flags.get('port'), host: flags.get('ip')}, advertiseToSkyAPI);
+    Log.info('Connected to mongo', {addr: flags.get('mongo')});
+
+    if (topology) {
+        topology.on('ha', function(type, data) {
+            if (type !== 'end') {
+                return;
+            }
+            if (data.state.primary) {
+                numNoPrimaries = 0;
+                return;
+            }
+            if (!data.state.primary) {
+                Log.error('Mongo topology lost connection to primary!', {
+                    state: data.state,
+                    numNoPrimaries: numNoPrimaries
+                });
+                if (!data.state.secondaries || data.state.secondaries.length < 1) {
+                    Log.fatal('Lost connection to all mongo instances!');
+                    return;
+                }
+                if (numNoPrimaries++ >= 1) {
+                    Log.fatal('Lost connection to all mongo instances!');
+                }
+            }
+        }.bind(this));
+        topology.on('left', function(serverType, server) {
+            //so server.name should be a getter to get the serverDetails
+            //see: https://github.com/christkv/mongodb-core/blob/master/lib/topologies/server.js#L556
+            Log.warn('Lost connection to mongo server', {type: server.name});
+        }.bind(this));
+    }
+
+    server = new WebSocketServer({port: flags.get('port'), host: flags.get('ip')}, advertiseToSkyAPI);
     server.on('connection', function(ws) {
         var ip = ws._socket.remoteAddress;
-        debug(ip, '- connect');
+        Log.debug('New ws connection', {ip: ip});
 
         ws.on('message', function(message) {
-            debug(ip,'- message', message);
+            Log.debug('New ws message', {message: message, ip: ip});
             try {
                 handleMessage(localDB, ws, message);
             } catch (e) {
-                debug(ip, '- error handling message', e);
+                Log.error('Error handling message', {error: e, ip: ip});
             }
         });
         ws.on('error', function(err) {
-            debug(ip, '- ws error', err);
+            Log.error('Error from ws', {err: err, ip: ip});
             var i = allClients.indexOf(ws);
             if (i !== -1) {
                 allClients.splice(i, 1);
             }
         });
         ws.on('close', function() {
-            debug(ip, '- close');
+            Log.debug('Close from ws', {ip: ip});
             var i = allClients.indexOf(ws);
             if (i !== -1) {
                 allClients.splice(i, 1);
