@@ -1,5 +1,8 @@
 ## Changelog ##
 
+### 0.5.2 ###
+* Upgrade to newest skyprovider
+
 ### 0.5.0 ###
 * Switch to using modulelog
 
